@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<T3DataStructure>
+	<meta>
+		<langDisable>1</langDisable>
+	</meta>
+	<ROOT>
+		<type>array</type>
+		<el>
+			<url>
+				<TCEforms>
+					<label>URL</label>
+					<config>
+						<type>input</type>
+					</config>
+				</TCEforms>
+			</url>
+			<domain>
+				<TCEforms>
+					<label>domain</label>
+					<config>
+						<type>input</type>
+					</config>
+				</TCEforms>
+			</domain>
+			<user>
+				<TCEforms>
+					<label>user</label>
+					<config>
+						<type>input</type>
+					</config>
+				</TCEforms>
+			</user>
+			<password>
+				<TCEforms>
+					<label>password</label>
+					<config>
+						<type>input</type>
+						<eval>password</eval>
+					</config>
+				</TCEforms>
+			</password>
+		</el>
+	</ROOT>
+</T3DataStructure>
+
