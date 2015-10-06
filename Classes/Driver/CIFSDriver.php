@@ -50,22 +50,6 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 */
 	protected $urlParts;
 	
-	protected static $errorMessages = array(
-		1 	=> "Operation not permitted",
-		2 	=> "No such file or directory",
-		9 	=> "Bad file or directory resource",
-		12 	=> "Out of memory",
-		13 	=> "Permission denied",
-		16 	=> "Device or resource busy",
-		17 	=> "Resource exists",
-		20 	=> "Not a directory",
-		21 	=> "Is a directory",
-		22 	=> "Invalid argument",
-		28 	=> "No space left on device",
-		39 	=> "Directory not empty",
-		111 => "Connection refused (Samba not running?)",
-	);
-
 	public function __construct(array $configuration = array()) {
 		parent::__construct($configuration);
 		$this->capabilities =
@@ -697,7 +681,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 */
 	protected function getLastErrorMessage() {
 		$errno = smbclient_state_errno($this->connection);
-		return "Error #" . $errno . " (" . self::$errorMessages[$errno] . ")";
+		return posix_strerror($errno);
 	}
 	
 	/**
