@@ -91,8 +91,6 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	public function initialize() {
 		if (!function_exists('smbclient_state_new')) {
 			$this->addFlashMessage('CIFS-FAL: libsmbclient-php is not installed!');
-		} elseif(((float)smbclient_version()) < 0.8) {
-			$this->addFlashMessage('CIFS-FAL: you need libsmbclient-php version 0.8.0 or newer');
 		} else {
 			$this->connection = smbclient_state_new();
 			if (!$this->connection) {
@@ -523,11 +521,16 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			return;
 		}
 
-		$url = $this->buildUrl($identifier);
+		$stat = @smbclient_stat($this->connection, $this->url . $folderIdentifier);
+
+		if ($stat === false && $identifier == '/') {
+			// The share itself is not a file which "exists"
+			return array('r' => true);
+		}
 
 		return array(
-			'r' => is_readable($url),
-			'w' => is_writeable($url)
+			'r' => ($stat['mode'] & 4) ? true : false,
+			'w' => ($stat['mode'] & 2) ? true : false,
 		);
 	}
 
@@ -769,15 +772,5 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	protected function getLastErrorMessage() {
 		$errno = smbclient_state_errno($this->connection);
 		return posix_strerror($errno);
-	}
-	
-	/**
-	 * Build a URL that can be used as a PHP stream (includeing username and password)
-	 *
-	 * @param unknown $identifier
-	 * @return string
-	 */
-	protected function buildUrl($identifier) {
-		return "smb://" . $this->configuration['user'] . ':' . $this->configuration['password'] . '@' . $this->urlParts['host'] . $this->urlParts['path'];
 	}
 }
