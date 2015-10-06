@@ -98,6 +98,9 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			if (!$this->connection) {
 				throw new \Exception("Could not create a SMB connection");
 			}
+
+			smbclient_option_set($this->connection, SMBCLIENT_OPT_URLENCODE_READDIR_ENTRIES, true);
+
 			if (!smbclient_state_init($this->connection, $this->configuration['domain'], $this->configuration['user'], $this->configuration['password'])) {
 				throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
 			}
@@ -554,7 +557,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 
 		return array(
 			'identifier' => $folderIdentifier,
-			'name' => PathUtility::basename($folderIdentifier),
+			'name' => rawurldecode(PathUtility::basename($folderIdentifier)),
 			'storage' => $this->storageUid
 		);
 	}
