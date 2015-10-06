@@ -299,7 +299,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			}
 		}
 
-		$stat = smbclient_stat($this->connection, $this->url . $folderIdentifier);
+		$stat = @smbclient_stat($this->connection, $this->url . $folderIdentifier);
 		return ($stat['mode'] & 040000) ? true : false;
 	}
 
@@ -667,7 +667,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			return array();
 		}
 
-		$handle = smbclient_opendir($this->connection, $this->url . $folderIdentifier);
+		$handle = @smbclient_opendir($this->connection, $this->url . $folderIdentifier);
 		if (!$handle) {
 			$this->addFlashMessage($this->getLastErrorMessage() . ' while opening ' . $this->url . $folderIdentifier);
 			return array();
