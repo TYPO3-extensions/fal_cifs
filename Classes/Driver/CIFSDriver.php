@@ -58,6 +58,12 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			ResourceStorage::CAPABILITY_WRITABLE;
 	}
 
+	public function __destruct() {
+		if ($this->connection) {
+			smbclient_state_free($this->connection);
+		}
+	}
+
 	/**
 	 * Processes the configuration for this driver.
 	 * @return void
