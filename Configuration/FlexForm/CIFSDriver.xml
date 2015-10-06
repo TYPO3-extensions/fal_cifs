@@ -39,6 +39,30 @@
 					</config>
 				</TCEforms>
 			</password>
+			<kerberos>
+				<TCEforms>
+					<label>Use Kerberos</label>
+					<config>
+						<type>check</type>
+					</config>
+				</TCEforms>
+			</kerberos>
+			<keytab>
+				<TCEforms>
+					<label>Kerberos keytab</label>
+					<config>
+						<type>input</type>
+					</config>
+				</TCEforms>
+			</keytab>
+			<principal>
+				<TCEforms>
+					<label>Kerberos principal ("SPN/host")</label>
+					<config>
+						<type>input</type>
+					</config>
+				</TCEforms>
+			</principal>
 		</el>
 	</ROOT>
 </T3DataStructure>

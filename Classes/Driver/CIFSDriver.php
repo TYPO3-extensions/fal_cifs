@@ -101,8 +101,55 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 
 			smbclient_option_set($this->connection, SMBCLIENT_OPT_URLENCODE_READDIR_ENTRIES, true);
 
-			if (!smbclient_state_init($this->connection, $this->configuration['domain'], $this->configuration['user'], $this->configuration['password'])) {
-				throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
+			if ($this->configuration['kerberos']) {
+				if (!extension_loaded("krb5")){
+					$this->addFlashMessage('CIFS-FAL: You need to install php-pecl-krb5 to access kerberos-authenticated CIFS shares');
+					return;
+				}
+
+				$cacheFile = getenv("KRB5CCNAME");
+				if (!$cacheFile) {
+					$cacheFile = "FILE:/tmp/krb5cc_" . getmyuid() . "_typo3_storage_" . $this->storageUid;
+					putenv("KRB5CCNAME=" . $cacheFile);
+				}
+
+				$krb5 = new \KRB5CCache();
+				try {
+					$krb5->open($cacheFile);
+					$krb5->isValid();
+				} catch(\Exception $e) {
+					// Cached ticket not found or expired
+					try {
+						if ($this->configuration['keytab']) {
+							if (!$krb5->initKeytab($this->configuration['principal'], $this->configuration['keytab'])) {
+								$this->addFlashMessage("FIFS-FAL: Failed authenticating using Kerberos with keytab");
+								$this->connection = NULL;
+								return;
+							}
+						} else {
+							if (!$krb5->initPassword($this->configuration['user'], $this->configuration['password'])) {
+								$this->addFlashMessage("FIFS-FAL: Failed authenticating using Kerberos with user name");
+								$this->connection = NULL;
+								return;
+							}
+						}
+
+						$krb5->save($cacheFile);
+					} catch(\Exception $e) {
+						$this->addFlashMessage("FIFS-FAL: Kerberos: " . $e->getMessage());
+						$this->connection = NULL;
+						return;
+					}
+				}
+
+				smbclient_option_set($this->connection, SMBCLIENT_OPT_USE_KERBEROS, true);
+				if (!smbclient_state_init($this->connection, null /*$this->configuration['domain']*/, $this->configuration['principal'])) {
+					throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
+				}
+			} else {
+				if (!smbclient_state_init($this->connection, $this->configuration['domain'], $this->configuration['user'], $this->configuration['password'])) {
+					throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
+				}
 			}
 		}
 	}
@@ -624,14 +671,36 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 		}
 		$items = array();
 		while (($entry = smbclient_readdir($this->connection, $handle)) !== false) {
-			if (!$includeDirs && $entry['type'] == 'directory')
+			switch($entry['type']) {
+			case 'directory':
+			case 'file share':
+				$type = 'directory';
+				break;
+			case 'file':
+				$type = 'file';
+				break;
+			default:
+				$type = '';
+			}
+
+			if (!$type) {
+				continue;
+			}
+
+			if (!$includeDirs && $type == 'directory')
 				continue;
 
-			if (!$includeFiles && $entry['type'] == 'file')
+			if (!$includeFiles && $type == 'file')
 				continue;
+
+			$stat = @smbclient_stat($this->connection, $this->url . $folderIdentifier . $entry['name']);
+			if (!$stat) {
+				// Some files cannot be stat'd - do not even list them!
+				continue;
+			}
 
 			$name = rtrim($folderIdentifier, '/') . '/' . $entry['name'];
-			if ($entry['type'] == 'directory')
+			if ($type == 'directory')
 				$name .= '/';
 
 			if (!$this->applyFilterMethodsToDirectoryItem($filterMethods, $entry['name'], $name, $folderIdentifier)) {
