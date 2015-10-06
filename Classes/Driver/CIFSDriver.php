@@ -69,8 +69,17 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return void
 	 */
 	public function processConfiguration() {
-		$this->urlParts = parse_url($this->configuration['url']);
-		$this->url = rtrim($this->configuration['url'], '/');
+		if (preg_match("/^[\\\\\\/]{2}([^\\\\\\/]+)(.*)$/", $this->configuration['url'], $matches)) {
+			$path = str_replace("\\", '/', $matches[2]);
+			$this->urlParts = array(
+				'host' => $matches[1],
+				'path' => $path,
+			);
+			$this->url = "smb://" . $matches[1] . rtrim($path, '/');
+		} else {
+			$this->urlParts = parse_url($this->configuration['url']);
+			$this->url = rtrim($this->configuration['url'], '/');
+		}
 	}
 
 	/**
