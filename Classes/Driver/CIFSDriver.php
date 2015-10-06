@@ -397,7 +397,18 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string
 	 */
 	public function hash($fileIdentifier, $hashAlgorithm) {
-		// TODO implement
+		$temporaryFile = $this->getFileForLocalProcessing($fileIdentifier);
+
+		switch ($hashAlgorithm) {
+		case 'sha1':
+			$hash = sha1_file($temporaryFile);
+			break;
+		case 'md5':
+			$hash = md5_file($temporaryFile);
+			break;
+		default:
+			throw new \RuntimeException('Hash algorithm ' . $hashAlgorithm . ' is not implemented.', 1408550582);
+		}
 	}
 
 
@@ -501,7 +512,38 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string The path to the file on the local disk
 	 */
 	public function getFileForLocalProcessing($fileIdentifier, $writable = TRUE) {
-		// TODO implement
+		$hash = sha1($this->storageUid . ':' . $fileIdentifier);
+		$tempFileName = PATH_site . 'typo3temp/fal_cifs_' . $hash;
+		if (!file_exists($tempFileName)) {	// TODO || filemtime($tempFileName) < ?
+			$remoteHandle = smbclient_open($this->connection, $this->url . $fileIdentifier, 'r');
+			if (!$remoteHandle) {
+				throw new \Exception("CIFS-FAL: Couldn't open file " . $this->url . $fileIdentifier . ': ' . $this->getLastErrorMessage());
+			}
+
+			$localHandle = fopen($tempFileName, 'wb');
+			if (!$localHandle) {
+				throw new \Exception("CIFS-FAL: Couldn't open local temp file " . $tempFileName);
+			}
+
+			while ($chunk = smbclient_read($this->connection, $remoteHandle, 0x10000)) {
+				if (!fwrite($localHandle, $chunk)) {
+					fclose($localHandle);
+					unlink($tempFileName);
+					throw new \Exception("CIFS-FAL: Couldn't write to local temp file");
+				}
+			}
+
+			if ($chunk === false) {
+				throw new \Exception("CIFS-FAL: failed reading chunk");
+			}
+
+			fclose($localHandle);
+			smbclient_close($this->connection, $remoteHandle);
+
+			GeneralUtility::fixPermissions($tempFileName);
+		}
+
+		return $tempFileName;
 	}
 
 	/**
@@ -581,7 +623,16 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array
 	 */
 	public function getFileInfoByIdentifier($fileIdentifier, array $propertiesToExtract = array()) {
-		// TODO implement
+		$stat = smbclient_stat($this->connection, $this->url . $fileIdentifier);
+		return array(
+			'storage' => $this->storageUid,
+			'identifier' => $fileIdentifier,
+			'identifier_hash' => $this->hashIdentifier($fileIdentifier),
+			'name' => rawurldecode(PathUtility::basename($fileIdentifier)),
+			'size' => $stat['size'],
+			'creation_date' => $stat['ctime'],
+			'modification_date' => $stat['mtime'],
+		);
 	}
 
 	/**
