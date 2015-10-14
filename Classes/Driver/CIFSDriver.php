@@ -26,6 +26,12 @@ use TYPO3\CMS\Core\Resource\ResourceStorage;
 use TYPO3\CMS\Core\Resource\Exception\InsufficientFolderWritePermissionsException;
 
 class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
+
+	/**
+	 * @var WorldDirect\FalCifs\SMBClient
+	 */
+	protected $smbClient;
+
 	/**
 	 * A list of all supported hash algorithms, written all lower case and
 	 * without any dashes etc. (e.g. sha1 instead of SHA-1)
@@ -34,11 +40,6 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @var array
 	 */
 	protected $supportedHashAlgorithms = array('sha1', 'md5');
-
-	/**
-	 * @var resource
-	 */
-	protected $connection;
 
 	/**
 	 * @var string
@@ -56,12 +57,6 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			ResourceStorage::CAPABILITY_BROWSABLE |
 			ResourceStorage::CAPABILITY_PUBLIC |
 			ResourceStorage::CAPABILITY_WRITABLE;
-	}
-
-	public function __destruct() {
-		if ($this->connection) {
-			smbclient_state_free($this->connection);
-		}
 	}
 
 	/**
@@ -89,66 +84,11 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return void
 	 */
 	public function initialize() {
-		if (!function_exists('smbclient_state_new')) {
-			$this->addFlashMessage('CIFS-FAL: libsmbclient-php is not installed!');
-		} else {
-			$this->connection = smbclient_state_new();
-			if (!$this->connection) {
-				throw new \Exception("Could not create a SMB connection");
-			}
-
-			smbclient_option_set($this->connection, SMBCLIENT_OPT_URLENCODE_READDIR_ENTRIES, true);
-
-			if ($this->configuration['kerberos']) {
-				if (!extension_loaded("krb5")){
-					$this->addFlashMessage('CIFS-FAL: You need to install php-pecl-krb5 to access kerberos-authenticated CIFS shares');
-					return;
-				}
-
-				$cacheFile = getenv("KRB5CCNAME");
-				if (!$cacheFile) {
-					$cacheFile = "FILE:/tmp/krb5cc_" . getmyuid() . "_typo3_storage_" . $this->storageUid;
-					putenv("KRB5CCNAME=" . $cacheFile);
-				}
-
-				$krb5 = new \KRB5CCache();
-				try {
-					$krb5->open($cacheFile);
-					$krb5->isValid();
-				} catch(\Exception $e) {
-					// Cached ticket not found or expired
-					try {
-						if ($this->configuration['keytab']) {
-							if (!$krb5->initKeytab($this->configuration['principal'], $this->configuration['keytab'])) {
-								$this->addFlashMessage("FIFS-FAL: Failed authenticating using Kerberos with keytab");
-								$this->connection = NULL;
-								return;
-							}
-						} else {
-							if (!$krb5->initPassword($this->configuration['user'], $this->configuration['password'])) {
-								$this->addFlashMessage("FIFS-FAL: Failed authenticating using Kerberos with user name");
-								$this->connection = NULL;
-								return;
-							}
-						}
-
-						$krb5->save($cacheFile);
-					} catch(\Exception $e) {
-						$this->addFlashMessage("FIFS-FAL: Kerberos: " . $e->getMessage());
-						$this->connection = NULL;
-						return;
-					}
-				}
-
-				smbclient_option_set($this->connection, SMBCLIENT_OPT_USE_KERBEROS, true);
-				if (!smbclient_state_init($this->connection, null /*$this->configuration['domain']*/, $this->configuration['principal'])) {
-					throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
-				}
-			} else {
-				if (!smbclient_state_init($this->connection, $this->configuration['domain'], $this->configuration['user'], $this->configuration['password'])) {
-					throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
-				}
-			}
+		try {
+			$this->configuration['storageUid'] = $this->storageUid;
+			$this->smbClient = GeneralUtility::makeInstance('WorldDirect\FalCifs\SMBClient', $this->configuration);
+		} catch(\Exception $e) {
+			$this->addFlashMessage('CIFS-FAL: ' . $e->getMessage());
 		}
 	}
 
@@ -172,7 +112,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string
 	 */
 	public function getRootLevelFolder() {
-		if (!$this->connection) {
+		if (!$this->smbClient) {
 			return;
 		}
 		return '/';
@@ -222,7 +162,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string the Identifier of the new folder
 	 */
 	public function createFolder($newFolderName, $parentFolderIdentifier = '', $recursive = FALSE) {
-		if (!$this->connection) {
+		if (!$this->smbClient) {
 			throw new \Exception("CIFS-FAL: createFolder($newFolderName): Not connected");
 		}
 
@@ -232,9 +172,11 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 
 		$newFolderIdentifier = rtrim($parentFolderIdentifier, '/') . '/' . rawurlencode($newFolderName);
 
-		if (!smbclient_mkdir($this->connection, $this->url . $newFolderIdentifier)) {
+		try {
+			$this->smbClient->mkdir($this->url . $newFolderIdentifier, $recursive);
+		} catch(\Exception $e) {
 			if ($newFolderName != '_processed_') {
-				$this->addFlashMessage('Error creating folder "' . $this->url . $newFolderIdentifier . '": ' . $this->getLastErrorMessage());
+				$this->addFlashMessage($e->getMessage());
 			}
 			return;
 		}
@@ -272,15 +214,16 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return boolean
 	 */
 	public function fileExists($fileIdentifier) {
-		if(!$this->connection) {
+		if(!$this->smbClient) {
 			throw new \Exception("CIFS-FAL: Not connected");
 		}
 
-		$stat = smbclient_stat($this->connection, $this->url . $folderIdentifier);
-		if (!$stat)
+		try {
+			$stat = $this->smbClient->stat($this->url . $folderIdentifier);
+			return ($stat['mode'] & 040000) ? false : true;
+		} catch(\Exception $e) {
 			return false;
-
-		return ($stat['mode'] & 040000) ? false : true;
+		}
 	}
 
 	/**
@@ -291,7 +234,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return boolean
 	 */
 	public function folderExists($folderIdentifier) {
-		if(!$this->connection) {
+		if(!$this->smbClient) {
 			if ($folderIdentifier == '/' || $folderIdentifier == '_processed_') {
 				return;
 			} else {
@@ -299,7 +242,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			}
 		}
 
-		$stat = @smbclient_stat($this->connection, $this->url . $folderIdentifier);
+		$stat = @$this->smbClient->stat($this->url . $folderIdentifier);
 		return ($stat['mode'] & 040000) ? true : false;
 	}
 
@@ -515,32 +458,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 		$hash = sha1($this->storageUid . ':' . $fileIdentifier);
 		$tempFileName = PATH_site . 'typo3temp/fal_cifs_' . $hash;
 		if (!file_exists($tempFileName)) {	// TODO || filemtime($tempFileName) < ?
-			$remoteHandle = smbclient_open($this->connection, $this->url . $fileIdentifier, 'r');
-			if (!$remoteHandle) {
-				throw new \Exception("CIFS-FAL: Couldn't open file " . $this->url . $fileIdentifier . ': ' . $this->getLastErrorMessage());
-			}
-
-			$localHandle = fopen($tempFileName, 'wb');
-			if (!$localHandle) {
-				throw new \Exception("CIFS-FAL: Couldn't open local temp file " . $tempFileName);
-			}
-
-			while ($chunk = smbclient_read($this->connection, $remoteHandle, 0x10000)) {
-				if (!fwrite($localHandle, $chunk)) {
-					fclose($localHandle);
-					unlink($tempFileName);
-					throw new \Exception("CIFS-FAL: Couldn't write to local temp file");
-				}
-			}
-
-			if ($chunk === false) {
-				throw new \Exception("CIFS-FAL: failed reading chunk");
-			}
-
-			fclose($localHandle);
-			smbclient_close($this->connection, $remoteHandle);
-
-			GeneralUtility::fixPermissions($tempFileName);
+			$this->smbClient->getFile($this->url . $fileIdentifier, $tempFileName);
 		}
 
 		return $tempFileName;
@@ -554,7 +472,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array
 	 */
 	public function getPermissions($identifier) {
-		if (!$this->connection) {
+		if (!$this->smbClient) {
 			if ($identifier == '/') {
 				return;
 			} else {
@@ -563,17 +481,21 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			return;
 		}
 
-		$stat = @smbclient_stat($this->connection, $this->url . $folderIdentifier);
+		try {
+			$stat = @$this->smbClient->stat($this->url . $folderIdentifier);
 
-		if ($stat === false && $identifier == '/') {
-			// The share itself is not a file which "exists"
-			return array('r' => true);
+			return array(
+				'r' => ($stat['mode'] & 4) ? true : false,
+				'w' => ($stat['mode'] & 2) ? true : false,
+			);
+		} catch(\Exception $e) {
+			if ($stat === false && $identifier == '/') {
+				// The share itself is not a file which "exists"
+				return array('r' => true);
+			} else {
+				throw $e;
+			}
 		}
-
-		return array(
-			'r' => ($stat['mode'] & 4) ? true : false,
-			'w' => ($stat['mode'] & 2) ? true : false,
-		);
 	}
 
 	/**
@@ -602,7 +524,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return boolean TRUE if $content is within or matches $folderIdentifier
 	 */
 	public function isWithin($folderIdentifier, $identifier) {
-		if (!$this->connection) {
+		if (!$this->smbClient) {
 			throw new \Exception("CIFS-FAL: isWithin($folderIdentifier, $identifier): Not connected");
 		}
 
@@ -623,7 +545,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array
 	 */
 	public function getFileInfoByIdentifier($fileIdentifier, array $propertiesToExtract = array()) {
-		$stat = smbclient_stat($this->connection, $this->url . $fileIdentifier);
+		$stat = $this->smbClient->stat($this->url . $fileIdentifier);
 		return array(
 			'storage' => $this->storageUid,
 			'identifier' => $fileIdentifier,
@@ -642,7 +564,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array
 	 */
 	public function getFolderInfoByIdentifier($folderIdentifier) {
-		if (!$this->connection) {
+		if (!$this->smbClient) {
 			if ($folderIdentifier == '//' || $folderIdentifier == '_processed_') {
 				return;
 			} else {
@@ -675,7 +597,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array of FileIdentifiers
 	 */
 	public function getFilesInFolder($folderIdentifier, $start = 0, $numberOfItems = 0, $recursive = FALSE, array $filenameFilterCallbacks = array()) {
-		return $this->getDirectoryItemList($folderIdentifier, $start, $numberOfItems, $filenameFilterCallbacks, TRUE, FALSE, $recursive);
+		return $this->smbClient->getDirectoryItemList($this->url, $folderIdentifier, $start, $numberOfItems, array($this, 'applyFilterMethodsToDirectoryItem'), $filenameFilterCallbacks, TRUE, FALSE, $recursive);
 	}
 
 	/**
@@ -690,82 +612,9 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array of Folder Identifier
 	 */
 	public function getFoldersInFolder($folderIdentifier, $start = 0, $numberOfItems = 0, $recursive = FALSE, array $folderNameFilterCallbacks = array()) {
-		return $this->getDirectoryItemList($folderIdentifier, $start, $numberOfItems, $folderNameFilterCallbacks, FALSE, TRUE, $recursive);
+		return $this->smbClient->getDirectoryItemList($this->url, $folderIdentifier, $start, $numberOfItems, array($this, 'applyFilterMethodsToDirectoryItem'), $folderNameFilterCallbacks, FALSE, TRUE, $recursive);
 	}
 
-
-	/**
-	 * Generic wrapper for extracting a list of items from a path.
-	 *
-	 * @param string $folderIdentifier
-	 * @param integer $start The position to start the listing; if not set, start from the beginning
-	 * @param integer $numberOfItems The number of items to list; if set to zero, all items are returned
-	 * @param array $filterMethods The filter methods used to filter the directory items
-	 * @param boolean $includeFiles
-	 * @param boolean $includeDirs
-	 * @param boolean $recursive
-	 *
-	 * @return array
-	 * @throws \InvalidArgumentException
-	 */
-	protected function getDirectoryItemList($folderIdentifier, $start = 0, $numberOfItems = 0, array $filterMethods, $includeFiles = TRUE, $includeDirs = TRUE, $recursive = FALSE) {
-		if(!$this->connection) {
-			if ($folderIdentifier == '/') {
-				return;
-			} else {
-				throw new \Exception("CIFS-FAL: getDirectoryItemList($folderIdentifier): Not connected");
-			}
-			return array();
-		}
-
-		$handle = @smbclient_opendir($this->connection, $this->url . $folderIdentifier);
-		if (!$handle) {
-			$this->addFlashMessage($this->getLastErrorMessage() . ' while opening ' . $this->url . $folderIdentifier);
-			return array();
-		}
-		$items = array();
-		while (($entry = smbclient_readdir($this->connection, $handle)) !== false) {
-			switch($entry['type']) {
-			case 'directory':
-			case 'file share':
-				$type = 'directory';
-				break;
-			case 'file':
-				$type = 'file';
-				break;
-			default:
-				$type = '';
-			}
-
-			if (!$type) {
-				continue;
-			}
-
-			if (!$includeDirs && $type == 'directory')
-				continue;
-
-			if (!$includeFiles && $type == 'file')
-				continue;
-
-			$stat = @smbclient_stat($this->connection, $this->url . $folderIdentifier . $entry['name']);
-			if (!$stat) {
-				// Some files cannot be stat'd - do not even list them!
-				continue;
-			}
-
-			$name = rtrim($folderIdentifier, '/') . '/' . $entry['name'];
-			if ($type == 'directory')
-				$name .= '/';
-
-			if (!$this->applyFilterMethodsToDirectoryItem($filterMethods, $entry['name'], $name, $folderIdentifier)) {
-				continue;
-			}
-
-			$items[$name] = $name;
-		}
-		smbclient_closedir($this->connection, $handle);
-		return $items;
-	}
 
 
 	/**
@@ -799,7 +648,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @throws \RuntimeException
 	 * @return boolean
 	 */
-	protected function applyFilterMethodsToDirectoryItem(array $filterMethods, $itemName, $itemIdentifier, $parentIdentifier) {
+	public function applyFilterMethodsToDirectoryItem(array $filterMethods, $itemName, $itemIdentifier, $parentIdentifier) {
 		foreach ($filterMethods as $filter) {
 			if (is_array($filter)) {
 				$result = call_user_func($filter, $itemName, $itemIdentifier, $parentIdentifier, array(), $this);
@@ -813,15 +662,5 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			}
 		}
 		return TRUE;
-	}
-
-	/**
-	 * Get an error message from last error reported from libsmbclient
-	 *
-	 * @return string
-	 */
-	protected function getLastErrorMessage() {
-		$errno = smbclient_state_errno($this->connection);
-		return posix_strerror($errno);
 	}
 }
