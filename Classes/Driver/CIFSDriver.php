@@ -24,6 +24,7 @@ use TYPO3\CMS\Core\Utility\PathUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Resource\ResourceStorage;
 use TYPO3\CMS\Core\Resource\Exception\InsufficientFolderWritePermissionsException;
+use TYPO3\CMS\Core\Resource\Exception\FileDoesNotExistException;
 
 class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 
@@ -242,8 +243,12 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			}
 		}
 
-		$stat = @$this->smbClient->stat($this->url . $folderIdentifier);
-		return ($stat['mode'] & 040000) ? true : false;
+		try {
+			$stat = @$this->smbClient->stat($this->url . $folderIdentifier);
+			return ($stat['mode'] & 040000) ? true : false;
+		} catch(FileDoesNotExistException $e) {
+			return false;
+		}
 	}
 
 	/**

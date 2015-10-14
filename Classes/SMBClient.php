@@ -48,11 +48,11 @@ class SMBClient {
 
 			smbclient_option_set($this->connection, SMBCLIENT_OPT_USE_KERBEROS, true);
 			if (!smbclient_state_init($this->connection, null /*$configuration['domain']*/, $configuration['principal'])) {
-				throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
+				throw $this->errnoToException('Kerberos authentication');
 			}
 		} else {
 			if (!smbclient_state_init($this->connection, $configuration['domain'], $configuration['user'], $configuration['password'])) {
-				throw new \Exception('SMB: errno ' . smbclient_state_errno($this->connection) . ' while authenticating');
+				throw $this->errnoToException('User/Password authentication');
 			}
 		}
 	}
@@ -69,6 +69,9 @@ class SMBClient {
 	 */
 	public function stat($url) {
 		$stat = smbclient_stat($this->connection, $url);
+		if (!$stat) {
+			throw $this->errnoToException('stat: ' . $url);
+		}
 		return $stat;
 	}
 
@@ -78,7 +81,7 @@ class SMBClient {
 	 */
 	public function mkdir($url, $recursive = FALSE) {
 		if (!smbclient_mkdir($this->connection, $url)) {
-			throw new \Exception('Error creating folder "' . $url . '": ' . $this->getLastErrorMessage());
+			throw $this->errnoToException('Error creating folder ' . $url);
 		}
 	}
 
@@ -93,21 +96,48 @@ class SMBClient {
 	}
 
 	/**
+	 * Translate errno to exception
+	 *
+	 * @param string $message
+	 * @param int errno
+	 * @return TYPO3\CMS\Core\Resource\Exception
+	 */
+	protected function errnoToException($message, $errno = null) {
+		if (!$errno) {
+			$errno = smbclient_state_errno($this->connection);
+		}
+
+		$message = 'CIFS-FAL: ' . $message . ': ' . $this->getLastErrorMessage($errno);
+
+		switch($errno) {
+		case 1:  // EPERM
+		case 13: // EACCESS
+			return new \TYPO3\CMS\Core\Resource\Exception\InsufficientFileAccessPermissionsException($message);
+		case 2:  // ENOENT
+			return new \TYPO3\CMS\Core\Resource\Exception\FileDoesNotExistException($message);
+		case 30: // EROFS
+			return new \TYPO3\CMS\Core\Resource\Exception\InsufficientFolderWritePermissionsException($message);
+		default:
+			return new \TYPO3\CMS\Core\Resource\Exception($message);
+		}
+	}
+
+	/**
 	 * @param string $url
 	 * @param string fileName
 	 * @return file content if no file name given
 	 */
-	protected function getFile($url, $fileName = null) {
+	public function getFile($url, $fileName = null) {
 		$remoteHandle = smbclient_open($this->connection, $url, 'r');
 		if (!$remoteHandle) {
-			throw new \Exception("CIFS-FAL: Couldn't open file " . $url . ': ' . $this->getLastErrorMessage());
+			throw $this->errnoToException("Couldn't open file " . $url);
 		}
 
 		$content = '';
 		if ($fileName) {
 			$localHandle = fopen($fileName, 'wb');
 			if (!$localHandle) {
-				throw new \Exception("CIFS-FAL: Couldn't open local temp file " . $fileName);
+				throw $this->errnoToException("Couldn't open local temp file " . $fileName);
 			}
 		}
 
@@ -116,7 +146,7 @@ class SMBClient {
 				if (!fwrite($localHandle, $chunk)) {
 					fclose($localHandle);
 					unlink($fileName);
-					throw new \Exception("CIFS-FAL: Couldn't write to local temp file");
+					throw $this->errnoToException("Couldn't write to local temp file");
 				}
 			} else {
 				$content .= $chunk;
@@ -124,7 +154,7 @@ class SMBClient {
 		}
 
 		if ($chunk === false) {
-			throw new \Exception("CIFS-FAL: failed reading chunk");
+			throw $this->errnoToException("failed reading chunk");
 		}
 
 		smbclient_close($this->connection, $remoteHandle);
@@ -157,14 +187,14 @@ class SMBClient {
 			if ($folderUrl == '/') {
 				return;
 			} else {
-				throw new \Exception("CIFS-FAL: getDirectoryItemList($folderUrl): Not connected");
+				throw $this->errnoToException("getDirectoryItemList($folderUrl): Not connected");
 			}
 			return array();
 		}
 
 		$handle = @smbclient_opendir($this->connection, $baseUrl . $folderUrl);
 		if (!$handle) {
-			throw new \Exception($this->getLastErrorMessage() . ' while opening ' . $baseUrl . $folderUrl);
+			throw $this->errnoToException('Failed to open ' . $folderUrl);
 		}
 		$items = array();
 		while (($entry = smbclient_readdir($this->connection, $handle)) !== false) {
