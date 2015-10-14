@@ -230,9 +230,9 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			throw new InsufficientFolderWritePermissionsException("File mount is not writeable");
 		}
 
-		$newFolderIdentifier = rtrim($parentFolderIdentifier, '/') . '/' . $newFolderName;
+		$newFolderIdentifier = rtrim($parentFolderIdentifier, '/') . '/' . rawurlencode($newFolderName);
 
-		if (!smbclient_mkdir($his->connection, $this->url . $newFolderIdentifier)) {
+		if (!smbclient_mkdir($this->connection, $this->url . $newFolderIdentifier)) {
 			if ($newFolderName != '_processed_') {
 				$this->addFlashMessage('Error creating folder "' . $this->url . $newFolderIdentifier . '": ' . $this->getLastErrorMessage());
 			}
