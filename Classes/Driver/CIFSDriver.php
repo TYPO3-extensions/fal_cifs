@@ -225,7 +225,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 
 		try {
 			$stat = $this->smbClient->stat($this->url . $folderIdentifier);
-			return ($stat['mode'] & 040000) ? false : true;
+			return true;
 		} catch(\Exception $e) {
 			return false;
 		}
@@ -249,7 +249,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 
 		try {
 			$stat = @$this->smbClient->stat($this->url . $folderIdentifier);
-			return ($stat['mode'] & 040000) ? true : false;
+			return true;
 		} catch(FileDoesNotExistException $e) {
 			return false;
 		}
@@ -438,7 +438,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return boolean
 	 */
 	public function fileExistsInFolder($fileName, $folderIdentifier) {
-		// TODO implement
+		return $this->fileExists($folderIdentifier . $fileName);
 	}
 
 	/**
@@ -449,7 +449,7 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return boolean
 	 */
 	public function folderExistsInFolder($folderName, $folderIdentifier) {
-		// TODO implement
+		return $this->folderExists($folderIdentifier . $folderName);
 	}
 
 	/**
