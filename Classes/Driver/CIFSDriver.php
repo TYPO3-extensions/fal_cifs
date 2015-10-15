@@ -150,7 +150,11 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string
 	 */
 	public function getPublicUrl($identifier) {
-		// TODO implement
+		if ($this->configuration['publicUrlPrefix']) {
+			return $this->configuration['publicUrlPrefix'] . $identifier;
+		} else {
+			return $this->url . $identifier;
+		}
 	}
 
 	/**

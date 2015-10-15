@@ -63,6 +63,14 @@
 					</config>
 				</TCEforms>
 			</principal>
+			<publicUrlPrefix>
+				<TCEforms>
+					<label>Prefix for public URLs (e.g., "file:///f:")</label>
+					<config>
+						<type>input</type>
+					</config>
+				</TCEforms>
+			</publicUrlPrefix>
 		</el>
 	</ROOT>
 </T3DataStructure>
