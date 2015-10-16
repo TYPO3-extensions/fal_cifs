@@ -168,6 +168,55 @@ class SMBClient {
 	}
 
 	/**
+	 * @param string $url
+	 * @param string localFileName
+	 */
+	public function putFile($url, $localFileName) {
+		$localHandle = fopen($localFileName, 'rb');
+		if (!$localHandle) {
+			throw $this->errnoToException("Couldn't open local file " . $localFileName);
+		}
+
+		$remoteHandle = smbclient_creat($this->connection, $url);
+		if (!$remoteHandle) {
+			throw $this->errnoToException("Couldn't open file " . $url);
+		}
+
+		while ($chunk = fread($localHandle, 0x10000)) {
+			if (!smbclient_write($this->connection, $remoteHandle, $chunk)) {
+				throw $this->errnoToException("Couldn't write to remote file");
+			}
+		}
+
+		if ($chunk === false) {
+			throw new \Exception("failed reading chunk");
+		}
+
+		smbclient_close($this->connection, $remoteHandle);
+		fclose($localHandle);
+	}
+
+	/**
+	 * @param string $url
+	 */
+	public function unlinkFile($url) {
+		if (!@smbclient_unlink($this->connection, $url)) {
+			if (smbclient_state_errno($this->connection) != 2) {	// ENOENT
+				throw $this->errnoToException('unlink: ' . $url);
+			}
+		}
+	}
+
+	/**
+	 * @param string $url
+	 */
+	public function rmdir($url) {
+		if (!smbclient_rmdir($this->connection, $url)) {
+			throw $this->errnoToException('rmdir: ' . $url);
+		}
+	}
+
+	/**
 	 * Generic wrapper for extracting a list of items from a path.
 	 *
 	 * @param string $baseUrl

@@ -150,6 +150,10 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string
 	 */
 	public function getPublicUrl($identifier) {
+		if ($localFileName = $this->getLocalProcessedFile($identifier)) {
+			return 'typo3temp/fal_cifs' . $identifier;
+		}
+
 		if ($this->configuration['publicUrlPrefix']) {
 			return $this->configuration['publicUrlPrefix'] . $identifier;
 		} else {
@@ -171,18 +175,19 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			throw new \Exception("CIFS-FAL: createFolder($newFolderName): Not connected");
 		}
 
+		$newFolderIdentifier = rtrim($parentFolderIdentifier, '/') . '/' . rawurlencode($newFolderName);
+
+		if ($newFolderName == '_processed_') {
+			return $newFolderIdentifier;
+		}
 		if (!$this->hasCapability(CAPABILITY_WRITABLE)) {
 			throw new InsufficientFolderWritePermissionsException("File mount is not writeable");
 		}
 
-		$newFolderIdentifier = rtrim($parentFolderIdentifier, '/') . '/' . rawurlencode($newFolderName);
-
 		try {
 			$this->smbClient->mkdir($this->url . $newFolderIdentifier, $recursive);
 		} catch(\Exception $e) {
-			if ($newFolderName != '_processed_') {
-				$this->addFlashMessage($e->getMessage());
-			}
+			$this->addFlashMessage($e->getMessage());
 			return;
 		}
 
@@ -221,6 +226,11 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	public function fileExists($fileIdentifier) {
 		if(!$this->smbClient) {
 			throw new \Exception("CIFS-FAL: Not connected");
+		}
+
+		$fileIdentifier = $this->canonicalizeAndCheckFileIdentifier($fileIdentifier);
+		if ($localFileName = $this->getLocalProcessedFile($fileIdentifier)) {
+			return file_exists($localFileName);
 		}
 
 		try {
@@ -279,7 +289,23 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string the identifier of the new file
 	 */
 	public function addFile($localFilePath, $targetFolderIdentifier, $newFileName = '', $removeOriginal = TRUE) {
-		// TODO implement
+		if (!$newFileName) {
+			$newFileName = basename($localFilePath);
+		}
+
+		$newFileIdentifier = $this->canonicalizeAndCheckFolderIdentifier($targetFolderIdentifier) . rawurlencode($newFileName);
+
+		if ($newLocalFileName = $this->getLocalProcessedFile($newFileIdentifier)) {
+			rename($localFilePath, $newLocalFileName);
+			GeneralUtility::fixPermissions($newLocalFileName);
+		} else {
+			$this->smbClient->putFile($this->url . $newFileIdentifier, $localFilePath);
+			if ($removeOriginal) {
+				unlink($localFilePath);
+			}
+		}
+
+		return $newFileIdentifier;
 	}
 
 	/**
@@ -338,7 +364,12 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return boolean TRUE if deleting the file succeeded
 	 */
 	public function deleteFile($fileIdentifier) {
-		// TODO implement
+		$fileIdentifier = $this->canonicalizeAndCheckFileIdentifier($fileIdentifier);
+		if ($localFileName = $this->getLocalProcessedFile($fileIdentifier)) {
+			unlink($localFileName);
+		} else {
+			return $this->smbClient->unlinkFile($this->url . $fileIdentifier);
+		}
 	}
 
 	/**
@@ -349,15 +380,14 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string
 	 */
 	public function hash($fileIdentifier, $hashAlgorithm) {
-		$temporaryFile = $this->getFileForLocalProcessing($fileIdentifier);
+		$stat = $this->smbClient->stat($this->url . $this->canonicalizeAndCheckFileIdentifier($fileIdentifier));
+		$uniqueString = $this->storageUid . $fileIdentifier . $stat['dev'] . $stat['size'] . $stat['ctime'] . $stat['mtime'];
 
 		switch ($hashAlgorithm) {
 		case 'sha1':
-			$hash = sha1_file($temporaryFile);
-			break;
+			return sha1($uniqueString);
 		case 'md5':
-			$hash = md5_file($temporaryFile);
-			break;
+			return md5($uniqueString);
 		default:
 			throw new \RuntimeException('Hash algorithm ' . $hashAlgorithm . ' is not implemented.', 1408550582);
 		}
@@ -416,7 +446,12 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string The file contents
 	 */
 	public function getFileContents($fileIdentifier) {
-		// TODO implement
+		$tempFileName = $this->tempFileName($fileIdentifier);
+		if (!file_exists($tempFileName)) {
+			return $this->smbClient->getFile($this->url . $fileIdentifier);
+		} else {
+			return file_get_contents($tempFileName);
+		}
 	}
 
 	/**
@@ -464,9 +499,8 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return string The path to the file on the local disk
 	 */
 	public function getFileForLocalProcessing($fileIdentifier, $writable = TRUE) {
-		$hash = sha1($this->storageUid . ':' . $fileIdentifier);
-		$tempFileName = PATH_site . 'typo3temp/fal_cifs_' . $hash;
-		if (!file_exists($tempFileName)) {	// TODO || filemtime($tempFileName) < ?
+		$tempFileName = $this->tempFileName($fileIdentifier);
+		if (!file_exists($tempFileName)) {
 			$this->smbClient->getFile($this->url . $fileIdentifier, $tempFileName);
 		}
 
@@ -554,7 +588,11 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array
 	 */
 	public function getFileInfoByIdentifier($fileIdentifier, array $propertiesToExtract = array()) {
-		$stat = $this->smbClient->stat($this->url . $fileIdentifier);
+		try {
+			$stat = $this->smbClient->stat($this->url . $this->canonicalizeAndCheckFileIdentifier($fileIdentifier));
+		} catch(FileDoesNotExistException $e) {
+			return array();
+		}
 		return array(
 			'storage' => $this->storageUid,
 			'identifier' => $fileIdentifier,
@@ -671,5 +709,32 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 			}
 		}
 		return TRUE;
+	}
+
+	/**
+	 * @param string $fileIdentifier
+	 * @return string
+	 */
+	protected function tempFileName($fileIdentifier) {
+		$hash = $this->hash($fileIdentifier, 'sha1');
+		if (!is_dir(PATH_site . 'typo3temp/fal_cifs')) {
+			mkdir (PATH_site . 'typo3temp/fal_cifs');
+		}
+		return PATH_site . 'typo3temp/fal_cifs/' . $hash . '.' . PathUtility::pathinfo($fileIdentifier, PATHINFO_EXTENSION);
+	}
+
+	/**
+	 * @param string $fileIdentifier
+	 * @return mixed
+	 */
+	protected function getLocalProcessedFile($fileIdentifier) {
+		if (substr($fileIdentifier, 0, 13) != '/_processed_/') {
+			return false;
+		}
+		if (!is_dir(PATH_site . 'typo3temp/fal_cifs/_processed_')) {
+			mkdir (PATH_site . 'typo3temp/fal_cifs');
+			mkdir (PATH_site . 'typo3temp/fal_cifs/_processed_');
+		}
+		return PATH_site . 'typo3temp/fal_cifs' . $fileIdentifier;
 	}
 }
