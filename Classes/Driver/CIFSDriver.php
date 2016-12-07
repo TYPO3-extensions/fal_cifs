@@ -748,4 +748,13 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 		}
 		return PATH_site . 'typo3temp/fal_cifs' . $fileIdentifier;
 	}
+
+	/**
+	 * @param string
+	 * @return string
+	 */
+	protected function canonicalizeAndCheckFilePath($filePath) {
+		return parent::canonicalizeAndCheckFilePath(str_replace(
+			' ', '%20', $filePath));
+	}
 }
