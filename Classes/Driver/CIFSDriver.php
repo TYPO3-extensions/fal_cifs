@@ -24,6 +24,7 @@ use TYPO3\CMS\Core\Utility\PathUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Resource\ResourceStorage;
 use TYPO3\CMS\Core\Resource\Exception\InsufficientFolderWritePermissionsException;
+use TYPO3\CMS\Core\Resource\Exception\InsufficientFileAccessPermissionsException;
 use TYPO3\CMS\Core\Resource\Exception\FileDoesNotExistException;
 
 class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
@@ -644,7 +645,12 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array of FileIdentifiers
 	 */
 	public function getFilesInFolder($folderIdentifier, $start = 0, $numberOfItems = 0, $recursive = FALSE, array $filenameFilterCallbacks = array()) {
-		return $this->smbClient->getDirectoryItemList($this->url, $folderIdentifier, $start, $numberOfItems, array($this, 'applyFilterMethodsToDirectoryItem'), $filenameFilterCallbacks, TRUE, FALSE, $recursive);
+		try {
+			return $this->smbClient->getDirectoryItemList(
+				$this->url, $folderIdentifier, $start, $numberOfItems, array($this, 'applyFilterMethodsToDirectoryItem'), $filenameFilterCallbacks, TRUE, FALSE, $recursive);
+		} catch(InsufficientFileAccessPermissionsException $e) {
+			return array();
+		}
 	}
 
 	/**
@@ -659,7 +665,12 @@ class CIFSDriver extends AbstractHierarchicalFilesystemDriver {
 	 * @return array of Folder Identifier
 	 */
 	public function getFoldersInFolder($folderIdentifier, $start = 0, $numberOfItems = 0, $recursive = FALSE, array $folderNameFilterCallbacks = array()) {
-		return $this->smbClient->getDirectoryItemList($this->url, $folderIdentifier, $start, $numberOfItems, array($this, 'applyFilterMethodsToDirectoryItem'), $folderNameFilterCallbacks, FALSE, TRUE, $recursive);
+		try {
+			return $this->smbClient->getDirectoryItemList(
+				$this->url, $folderIdentifier, $start, $numberOfItems, array($this, 'applyFilterMethodsToDirectoryItem'), $folderNameFilterCallbacks, FALSE, TRUE, $recursive);
+		} catch(InsufficientFileAccessPermissionsException $e) {
+			return array();
+		}
 	}
 
 
